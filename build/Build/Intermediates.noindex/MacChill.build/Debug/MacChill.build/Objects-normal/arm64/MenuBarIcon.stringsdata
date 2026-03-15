@@ -1,0 +1,16 @@
+{
+  "source": "/Users/suenot/projects/w_macchill/app/MacChill/Views/MenuBarIcon.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "%lld°",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 16
+        }
+      }
+    ]
+  },
+  "version": 1
+}
