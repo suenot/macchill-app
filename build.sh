@@ -24,17 +24,17 @@ xcodebuild \
     build 2>&1 | tail -20
 
 BUILD_DIR="build/Build/Products/$CONFIG"
+APPLICATIONS_DIR="${APPLICATIONS_DIR:-../applications}"
 
 if [ -d "$BUILD_DIR/MacChill.app" ]; then
+    mkdir -p "$APPLICATIONS_DIR"
+    cp -r "$BUILD_DIR/MacChill.app" "$APPLICATIONS_DIR/"
     echo ""
     echo "Build successful!"
-    echo "App location: $BUILD_DIR/MacChill.app"
-    echo ""
-    echo "To install to /Applications:"
-    echo "  cp -r $BUILD_DIR/MacChill.app /Applications/"
+    echo "App location: $APPLICATIONS_DIR/MacChill.app"
     echo ""
     echo "To run directly:"
-    echo "  open $BUILD_DIR/MacChill.app"
+    echo "  open $APPLICATIONS_DIR/MacChill.app"
 else
     echo "Build failed."
     exit 1

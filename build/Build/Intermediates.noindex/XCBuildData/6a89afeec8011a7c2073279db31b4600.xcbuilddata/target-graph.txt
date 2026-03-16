@@ -1,2 +1,0 @@
-Target dependency graph (1 target)
-Target 'MacChill' in project 'MacChill' (no dependencies)
