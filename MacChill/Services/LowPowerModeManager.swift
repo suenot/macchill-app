@@ -1,4 +1,7 @@
 import Foundation
+import os.log
+
+private let log = Logger(subsystem: "com.macchill", category: "LowPowerMode")
 
 // MARK: - Low Power Mode Manager
 // Uses `pmset` to toggle macOS Low Power Mode.
@@ -81,33 +84,40 @@ final class LowPowerModeManager {
 
     private func setLowPowerMode(enabled: Bool) {
         let value = enabled ? "1" : "0"
+        log.info("setLowPowerMode(\(enabled)) sudoers=\(self.isSudoersInstalled)")
 
         // Try passwordless sudo (works if sudoers entry is configured)
         if isSudoersInstalled {
             let task = Process()
+            let errPipe = Pipe()
             task.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
             task.arguments = ["-n", "/usr/bin/pmset", "-a", "lowpowermode", value]
             task.standardOutput = FileHandle.nullDevice
-            task.standardError = FileHandle.nullDevice
+            task.standardError = errPipe
 
             do {
                 try task.run()
                 task.waitUntilExit()
 
                 if task.terminationStatus == 0 {
+                    log.info("sudo pmset succeeded")
                     refreshStatus()
                     lastError = nil
                     return
                 }
+                let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+                let errMsg = String(data: errData, encoding: .utf8) ?? ""
+                log.error("sudo pmset failed: status=\(task.terminationStatus) err=\(errMsg)")
             } catch {
-                // Fall through
+                log.error("sudo pmset exception: \(error.localizedDescription)")
             }
         }
 
         // Sudoers not installed — install it (asks password once), then retry
         if !isSudoersInstalled {
+            log.info("Installing sudoers entry...")
             if installSudoers() {
-                // Sudoers installed, now retry with passwordless sudo
+                log.info("Sudoers installed, retrying pmset")
                 let task = Process()
                 task.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
                 task.arguments = ["-n", "/usr/bin/pmset", "-a", "lowpowermode", value]
@@ -119,17 +129,22 @@ final class LowPowerModeManager {
                     task.waitUntilExit()
 
                     if task.terminationStatus == 0 {
+                        log.info("sudo pmset succeeded after sudoers install")
                         refreshStatus()
                         lastError = nil
                         return
                     }
+                    log.error("sudo pmset failed after sudoers install: status=\(task.terminationStatus)")
                 } catch {
-                    // Fall through to direct AppleScript
+                    log.error("sudo pmset exception after sudoers: \(error.localizedDescription)")
                 }
+            } else {
+                log.error("Failed to install sudoers entry")
             }
         }
 
         // Last resort: direct AppleScript with password prompt
+        log.info("Falling back to AppleScript with password prompt")
         let script = """
         do shell script "/usr/bin/pmset -a lowpowermode \(value)" with administrator privileges
         """
@@ -139,8 +154,11 @@ final class LowPowerModeManager {
         appleScript?.executeAndReturnError(&errorDict)
 
         if let error = errorDict {
-            lastError = error[NSAppleScript.errorMessage] as? String ?? "Failed to set Low Power Mode"
+            let msg = error[NSAppleScript.errorMessage] as? String ?? "unknown"
+            log.error("AppleScript pmset failed: \(msg)")
+            lastError = msg
         } else {
+            log.info("AppleScript pmset succeeded")
             refreshStatus()
             lastError = nil
         }

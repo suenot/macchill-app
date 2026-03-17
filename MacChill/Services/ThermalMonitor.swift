@@ -1,6 +1,9 @@
 import Foundation
+import os.log
 import SwiftUI
 import UserNotifications
+
+private let log = Logger(subsystem: "com.macchill", category: "ThermalMonitor")
 
 // MARK: - Central Thermal Monitor
 // Polls temperature, thermal pressure, fan speed every 2 seconds.
@@ -130,9 +133,13 @@ final class ThermalMonitor {
             if !hasFans { hasFans = true }
         }
 
-        // 5. Refresh LPM status
+        // 5. Refresh LPM status from system (only if not auto-managed)
         LowPowerModeManager.shared.refreshStatus()
-        isLowPowerModeEnabled = LowPowerModeManager.shared.isLowPowerModeEnabled
+        let systemLPM = LowPowerModeManager.shared.isLowPowerModeEnabled
+        if !autoSwitchedLPM {
+            isLowPowerModeEnabled = systemLPM
+        }
+        log.debug("temp=\(self.temperature ?? -1, format: .fixed(precision: 0))°C lpm=\(self.isLowPowerModeEnabled) system=\(systemLPM) auto=\(self.autoSwitchedLPM) cooldown=\(self.cooldownCounter)")
 
         // 6. Auto-switch Low Power Mode
         handleAutoSwitch(pressure: newPressure)
@@ -159,6 +166,7 @@ final class ThermalMonitor {
 
         if temp >= enableTemp && !isLowPowerModeEnabled {
             // CPU too hot → enable LPM
+            log.info("Auto-enable LPM: temp=\(temp, format: .fixed(precision: 0))°C >= \(self.enableTemp, format: .fixed(precision: 0))°C")
             LowPowerModeManager.shared.enableLowPowerMode()
             isLowPowerModeEnabled = true
             autoSwitchedLPM = true
@@ -173,6 +181,7 @@ final class ThermalMonitor {
             // CPU cooled down → wait for cooldown then disable
             cooldownCounter += 1
             if cooldownCounter >= Self.cooldownBeforeDisable {
+                log.info("Auto-disable LPM: temp=\(temp, format: .fixed(precision: 0))°C <= \(self.disableTemp, format: .fixed(precision: 0))°C after \(Self.cooldownBeforeDisable) polls")
                 LowPowerModeManager.shared.disableLowPowerMode()
                 isLowPowerModeEnabled = false
                 autoSwitchedLPM = false
