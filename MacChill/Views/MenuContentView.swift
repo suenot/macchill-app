@@ -86,24 +86,34 @@ struct MenuContentView: View {
             Divider()
 
             // MARK: - Auto-Switch Settings
-            Text("Auto Low Power Mode")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            HStack {
-                Text("Activate at:")
-                    .font(.caption)
-                Picker("", selection: Binding(
-                    get: { monitor.autoSwitchThreshold },
-                    set: { monitor.autoSwitchThreshold = $0 }
-                )) {
-                    ForEach(AutoSwitchThreshold.allCases) { threshold in
-                        Text(threshold.displayName).tag(threshold)
-                    }
-                }
-                .pickerStyle(.menu)
+            Toggle("Auto Low Power Mode", isOn: $monitor.autoLPMEnabled)
                 .controlSize(.small)
-                .labelsHidden()
+
+            if monitor.autoLPMEnabled {
+                HStack {
+                    Text("Enable at:")
+                        .font(.caption)
+                        .frame(width: 65, alignment: .leading)
+                    Text("\(Int(monitor.enableTemp))°C")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.orange)
+                        .frame(width: 35)
+                    Slider(value: $monitor.enableTemp, in: 60...100, step: 5)
+                        .controlSize(.small)
+                }
+                HStack {
+                    Text("Disable at:")
+                        .font(.caption)
+                        .frame(width: 65, alignment: .leading)
+                    Text("\(Int(monitor.disableTemp))°C")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.green)
+                        .frame(width: 35)
+                    Slider(value: $monitor.disableTemp, in: 40...80, step: 5)
+                        .controlSize(.small)
+                }
             }
 
             Divider()

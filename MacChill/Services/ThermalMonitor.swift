@@ -25,14 +25,16 @@ final class ThermalMonitor {
 
     // MARK: - Settings (persisted via UserDefaults)
 
-    var autoSwitchThreshold: AutoSwitchThreshold {
-        get {
-            let raw = UserDefaults.standard.string(forKey: "autoSwitchThreshold") ?? "heavy"
-            return AutoSwitchThreshold(rawValue: raw) ?? .heavy
-        }
-        set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: "autoSwitchThreshold")
-        }
+    var autoLPMEnabled: Bool = UserDefaults.standard.object(forKey: "autoLPMEnabled") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(autoLPMEnabled, forKey: "autoLPMEnabled") }
+    }
+
+    var enableTemp: Double = UserDefaults.standard.object(forKey: "enableTemp") as? Double ?? 80 {
+        didSet { UserDefaults.standard.set(enableTemp, forKey: "enableTemp") }
+    }
+
+    var disableTemp: Double = UserDefaults.standard.object(forKey: "disableTemp") as? Double ?? 60 {
+        didSet { UserDefaults.standard.set(disableTemp, forKey: "disableTemp") }
     }
 
     var showTemperatureInMenuBar: Bool = UserDefaults.standard.object(forKey: "showTempMenuBar") as? Bool ?? true {
@@ -105,24 +107,8 @@ final class ThermalMonitor {
         // 1. Read thermal pressure
         let newPressure = ThermalPressureReader.shared.readPressure() ?? .unknown
 
-        // 2. Notifications on pressure change
-        if newPressure != previousPressure {
-            if notifyOnThrottle && newPressure.isThrottling && !previousPressure.isThrottling {
-                sendNotification(
-                    title: "Thermal Throttling",
-                    body: newPressure == .critical
-                        ? "Your Mac is severely throttled! Low Power Mode activated."
-                        : "Thermal pressure is Heavy. Low Power Mode activated."
-                )
-            }
-            if notifyOnRecovery && previousPressure.isThrottling && !newPressure.isThrottling && newPressure != .unknown {
-                sendNotification(
-                    title: "Thermal Pressure Recovered",
-                    body: "Your Mac is no longer being throttled."
-                )
-            }
-            previousPressure = newPressure
-        }
+        // 2. Track pressure changes
+        previousPressure = newPressure
 
         pressure = newPressure
 
@@ -166,28 +152,39 @@ final class ThermalMonitor {
         history.removeAll { $0.timestamp < cutoff }
     }
 
-    // MARK: - Auto Low Power Mode Logic
+    // MARK: - Auto Low Power Mode Logic (temperature-based)
 
     private func handleAutoSwitch(pressure: ThermalPressure) {
-        let threshold = autoSwitchThreshold
-        guard threshold != .off else { return }
+        guard autoLPMEnabled, let temp = temperature else { return }
 
-        if threshold.shouldEnableLPM(for: pressure) && !isLowPowerModeEnabled {
-            // Temperature is high → enable LPM
+        if temp >= enableTemp && !isLowPowerModeEnabled {
+            // CPU too hot → enable LPM
             LowPowerModeManager.shared.enableLowPowerMode()
             isLowPowerModeEnabled = true
             autoSwitchedLPM = true
             cooldownCounter = 0
-        } else if threshold.shouldDisableLPM(for: pressure) && isLowPowerModeEnabled && autoSwitchedLPM {
-            // Temperature dropped → wait for cooldown then disable
+            if notifyOnThrottle {
+                sendNotification(
+                    title: "Low Power Mode ON",
+                    body: "CPU at \(Int(temp))°C — enabled energy saving."
+                )
+            }
+        } else if temp <= disableTemp && isLowPowerModeEnabled && autoSwitchedLPM {
+            // CPU cooled down → wait for cooldown then disable
             cooldownCounter += 1
             if cooldownCounter >= Self.cooldownBeforeDisable {
                 LowPowerModeManager.shared.disableLowPowerMode()
                 isLowPowerModeEnabled = false
                 autoSwitchedLPM = false
                 cooldownCounter = 0
+                if notifyOnRecovery {
+                    sendNotification(
+                        title: "Low Power Mode OFF",
+                        body: "CPU cooled to \(Int(temp))°C — back to normal."
+                    )
+                }
             }
-        } else if !threshold.shouldDisableLPM(for: pressure) {
+        } else if temp > disableTemp {
             cooldownCounter = 0
         }
     }
