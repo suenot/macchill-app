@@ -184,7 +184,8 @@ final class ThermalMonitor {
                     )
                 }
             }
-        } else if temp > disableTemp {
+        } else if temp >= enableTemp {
+            // Really heating up again — reset cooldown
             cooldownCounter = 0
         }
     }

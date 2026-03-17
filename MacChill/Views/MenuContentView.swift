@@ -99,7 +99,7 @@ struct MenuContentView: View {
                         .fontWeight(.semibold)
                         .foregroundColor(.orange)
                         .frame(width: 35)
-                    Slider(value: $monitor.enableTemp, in: 60...100, step: 5)
+                    Slider(value: $monitor.enableTemp, in: 30...100, step: 5)
                         .controlSize(.small)
                 }
                 HStack {
@@ -111,7 +111,7 @@ struct MenuContentView: View {
                         .fontWeight(.semibold)
                         .foregroundColor(.green)
                         .frame(width: 35)
-                    Slider(value: $monitor.disableTemp, in: 40...80, step: 5)
+                    Slider(value: $monitor.disableTemp, in: 30...100, step: 5)
                         .controlSize(.small)
                 }
             }
