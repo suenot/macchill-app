@@ -60,6 +60,10 @@ final class ThermalMonitor {
     private var timer: Timer?
     private var previousPressure: ThermalPressure = .unknown
     private var cooldownCounter: Int = 0
+    private var lastLPMNotificationTime: Date = .distantPast
+    private var lastLPMEnableAttemptTime: Date = .distantPast
+    private static let notificationCooldown: TimeInterval = 30  // min seconds between same notifications
+    private static let enableRetryInterval: TimeInterval = 10   // don't retry enable more often than this
 
     // MARK: - Computed
 
@@ -133,12 +137,24 @@ final class ThermalMonitor {
             if !hasFans { hasFans = true }
         }
 
-        // 5. Refresh LPM status from system (only if not auto-managed)
+        // 5. Refresh LPM status from system
         LowPowerModeManager.shared.refreshStatus()
         let systemLPM = LowPowerModeManager.shared.isLowPowerModeEnabled
-        if !autoSwitchedLPM {
+
+        if autoSwitchedLPM {
+            // If we auto-enabled but system says OFF, someone else disabled it — respect that
+            if isLowPowerModeEnabled && !systemLPM {
+                log.info("System LPM was externally disabled, clearing auto flag")
+                isLowPowerModeEnabled = false
+                autoSwitchedLPM = false
+                cooldownCounter = 0
+            }
+            // If we auto-enabled and system confirms ON, keep our state
+        } else {
+            // Not auto-managed — always sync from system
             isLowPowerModeEnabled = systemLPM
         }
+
         log.debug("temp=\(self.temperature ?? -1, format: .fixed(precision: 0))°C lpm=\(self.isLowPowerModeEnabled) system=\(systemLPM) auto=\(self.autoSwitchedLPM) cooldown=\(self.cooldownCounter)")
 
         // 6. Auto-switch Low Power Mode
@@ -165,21 +181,30 @@ final class ThermalMonitor {
         guard autoLPMEnabled, let temp = temperature else { return }
 
         if temp >= enableTemp && !isLowPowerModeEnabled {
-            // CPU too hot → enable LPM
+            // CPU too hot → enable LPM (with retry throttle)
+            let now = Date()
+            guard now.timeIntervalSince(lastLPMEnableAttemptTime) >= Self.enableRetryInterval else {
+                log.debug("Skipping LPM enable: too soon since last attempt")
+                return
+            }
+            lastLPMEnableAttemptTime = now
+
             log.info("Auto-enable LPM: temp=\(temp, format: .fixed(precision: 0))°C >= \(self.enableTemp, format: .fixed(precision: 0))°C")
             LowPowerModeManager.shared.enableLowPowerMode()
             isLowPowerModeEnabled = true
             autoSwitchedLPM = true
             cooldownCounter = 0
+
             if notifyOnThrottle {
-                sendNotification(
+                sendThrottledNotification(
                     title: "Low Power Mode ON",
                     body: "CPU at \(Int(temp))°C — enabled energy saving."
                 )
             }
         } else if temp <= disableTemp && isLowPowerModeEnabled && autoSwitchedLPM {
-            // CPU cooled down → wait for cooldown then disable
+            // CPU cooled down → increment cooldown counter
             cooldownCounter += 1
+            log.debug("Cooldown \(self.cooldownCounter)/\(Self.cooldownBeforeDisable) for LPM disable")
             if cooldownCounter >= Self.cooldownBeforeDisable {
                 log.info("Auto-disable LPM: temp=\(temp, format: .fixed(precision: 0))°C <= \(self.disableTemp, format: .fixed(precision: 0))°C after \(Self.cooldownBeforeDisable) polls")
                 LowPowerModeManager.shared.disableLowPowerMode()
@@ -187,25 +212,34 @@ final class ThermalMonitor {
                 autoSwitchedLPM = false
                 cooldownCounter = 0
                 if notifyOnRecovery {
-                    sendNotification(
+                    sendThrottledNotification(
                         title: "Low Power Mode OFF",
                         body: "CPU cooled to \(Int(temp))°C — back to normal."
                     )
                 }
             }
-        } else if temp >= enableTemp {
-            // Really heating up again — reset cooldown
-            cooldownCounter = 0
         }
+        // NOTE: cooldown counter is NOT reset when temp rises above disableTemp.
+        // This prevents oscillation at the boundary from blocking disable forever.
+        // Counter only resets on successful disable or new enable.
     }
 
     // MARK: - Manual LPM Toggle
 
     func toggleLowPowerMode() {
-        LowPowerModeManager.shared.toggle()
-        LowPowerModeManager.shared.refreshStatus()
-        isLowPowerModeEnabled = LowPowerModeManager.shared.isLowPowerModeEnabled
-        autoSwitchedLPM = false  // user took manual control
+        let wantEnabled = !isLowPowerModeEnabled
+        log.info("Manual toggle: want LPM=\(wantEnabled)")
+        LowPowerModeManager.shared.setLowPowerMode(enabled: wantEnabled)
+
+        // Give pmset a moment to apply, then verify
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self else { return }
+            LowPowerModeManager.shared.refreshStatus()
+            let systemState = LowPowerModeManager.shared.isLowPowerModeEnabled
+            log.info("After toggle: system reports LPM=\(systemState)")
+            self.isLowPowerModeEnabled = systemState
+            self.autoSwitchedLPM = false  // user took manual control
+        }
     }
 
     // MARK: - Notifications
@@ -214,14 +248,21 @@ final class ThermalMonitor {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    private func sendNotification(title: String, body: String) {
+    private func sendThrottledNotification(title: String, body: String) {
+        let now = Date()
+        guard now.timeIntervalSince(lastLPMNotificationTime) >= Self.notificationCooldown else {
+            log.debug("Notification throttled: \(title)")
+            return
+        }
+        lastLPMNotificationTime = now
+
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
 
         let request = UNNotificationRequest(
-            identifier: UUID().uuidString,
+            identifier: "lpm-\(title)",  // reuse ID to replace previous
             content: content,
             trigger: nil
         )

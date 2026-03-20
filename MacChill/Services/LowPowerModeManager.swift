@@ -82,7 +82,7 @@ final class LowPowerModeManager {
         return errorDict == nil
     }
 
-    private func setLowPowerMode(enabled: Bool) {
+    func setLowPowerMode(enabled: Bool) {
         let value = enabled ? "1" : "0"
         log.info("setLowPowerMode(\(enabled)) sudoers=\(self.isSudoersInstalled)")
 
